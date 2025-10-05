@@ -196,3 +196,166 @@ def lambda_handler(event, context):
                 "error": str(e)
             })
         }
+
+
+
+#.....................................................SQS message Read Lambda Code..........................................
+
+
+import json
+import boto3
+
+# Create SQS client
+sqs = boto3.client("sqs")
+
+# Replace with your SQS queue URL
+QUEUE_URL = "https://sqs.ap-south-1.amazonaws.com/610726994339/myQueue.fifo"
+
+# HTML content served by Lambda
+HTML_PAGE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>View SQS Messages</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(to right, #667eea, #764ba2);
+      color: white;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 0;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 40px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+      width: 90%;
+      max-width: 600px;
+    }
+    h2 {
+      margin-bottom: 20px;
+    }
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    #messages {
+      margin-top: 20px;
+      text-align: left;
+      background: rgba(255,255,255,0.1);
+      padding: 15px;
+      border-radius: 8px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+  <script>
+    async function loadMessages() {
+      const resultBox = document.getElementById("messages");
+      resultBox.innerText = "Loading messages...";
+      try {
+        const response = await fetch(window.location.href, { method: "POST" });
+        const text = await response.text();
+        try {
+          const data = JSON.parse(text);
+          if (data.messages && data.messages.length > 0) {
+            resultBox.innerHTML = "<strong>Messages:</strong><br><br>" +
+              data.messages.map((m, i) => (i+1) + ". " + m).join("<br><br>");
+          } else {
+            resultBox.innerText = "No messages available.";
+          }
+        } catch {
+          resultBox.innerText = "Response: " + text;
+        }
+      } catch (err) {
+        resultBox.innerText = "Error: " + err;
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h2>📬 View Messages from SQS</h2>
+    <button onclick="loadMessages()">Load Messages</button>
+    <div id="messages"></div>
+  </div>
+</body>
+</html>
+"""
+
+def lambda_handler(event, context):
+    try:
+        # Detect HTTP method (API Gateway)
+        method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
+
+        # Serve HTML on GET
+        if method == "GET":
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Content-Type": "text/html",
+                    "Access-Control-Allow-Origin": "*"
+                },
+                "body": HTML_PAGE
+            }
+
+        # On POST, read from SQS
+        elif method == "POST":
+            response = sqs.receive_message(
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=5,
+                WaitTimeSeconds=1
+            )
+
+            messages = []
+            if "Messages" in response:
+                for msg in response["Messages"]:
+                    messages.append(msg["Body"])
+                    # Delete message after reading
+                    sqs.delete_message(
+                        QueueUrl=QUEUE_URL,
+                        ReceiptHandle=msg["ReceiptHandle"]
+                    )
+
+            return {
+                "statusCode": 200,
+                "headers": {
+                    "Access-Control-Allow-Origin": "*",
+                    "Content-Type": "application/json"
+                },
+                "body": json.dumps({"messages": messages})
+            }
+
+        else:
+            return {
+                "statusCode": 405,
+                "headers": {"Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"error": "Method not allowed"})
+            }
+
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Content-Type": "application/json"
+            },
+            "body": json.dumps({"error": str(e)})
+        }
